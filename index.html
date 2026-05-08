@@ -360,23 +360,95 @@ function App(){
       React.createElement("h2",{style:{color:"#fff",fontSize:24,fontWeight:800,marginBottom:8}},"\uD83D\uDD12 管理者ログイン"),
       React.createElement("p",{style:{color:"#FFE0B2",fontSize:14,marginBottom:24}},"管理者PINを入力"),
       pinPad(function(np){
-        if(np==="0000"){setPage("admin");loadMonthList();loadHistory(curMonthKey());setPin("");}
+        if(np==="0000"){setPage("admin");loadMonthList();loadHistoryWithRacks(curMonthKey());setPin("");}
         else{setPin("");setMsg("PINが違います");setTimeout(function(){setMsg(null);},2000);}
       },function(){setPage("select");setPin("");setMsg(null);})
     );
   }
 
   // === ADMIN PAGE ===
+  // === Admin: edit a day ===
+  function adminSaveDay(dayNum){
+    var dk=histMonth+"-"+pad(dayNum);
+    var elB1=document.getElementById("adm-b1-"+dayNum);
+    var elB2=document.getElementById("adm-b2-"+dayNum);
+    var elRk=document.getElementById("adm-rk-"+dayNum);
+    var v1=elB1?parseFloat(elB1.value):NaN;
+    var v2=elB2?parseFloat(elB2.value):NaN;
+    var rk=elRk?parseInt(elRk.value):NaN;
+    if(isNaN(v1)&&isNaN(v2)&&isNaN(rk)){
+      setMsg("値を入力してください");setTimeout(function(){setMsg(null);},2000);return;
+    }
+    // Get prev day data for diff calc
+    var prevDk=histMonth+"-"+pad(dayNum-1);
+    var saveFn=function(prevDoc){
+      var data={dateKey:dk,userId:"admin",userName:"管理者",time:new Date().getTime(),timeStr:pad(new Date().getHours())+":"+pad(new Date().getMinutes())};
+      if(!isNaN(v1)) data.b1_display=v1;
+      if(!isNaN(v2)) data.b2_display=v2;
+      if(prevDoc&&!isNaN(v1)&&!isNaN(v2)){
+        data.b1_gj=Math.round((v1-(prevDoc.b1_display||0))*100)/100;
+        data.b2_gj=Math.round((v2-(prevDoc.b2_display||0))*100)/100;
+        data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+        data.sales_daily=Math.round(data.total_gj*RATE_DAILY);
+        data.sales_invoice=Math.round(data.total_gj*RATE_INVOICE);
+      }
+      db.collection("daily_gj").doc(dk).set(data,{merge:true}).then(function(){
+        if(!isNaN(rk)){
+          db.collection("racks").doc(dk).set({dateKey:dk,count:rk,userId:"admin",userName:"管理者",time:new Date().getTime()},{merge:true});
+        }
+        setMsg(dayNum+"日を保存しました");setTimeout(function(){setMsg(null);},2000);
+        loadHistory(histMonth);
+      });
+    };
+    if(dayNum>1){
+      db.collection("daily_gj").doc(prevDk).get().then(function(doc){
+        saveFn(doc.exists?doc.data():null);
+      });
+    }else{
+      // 1st day: use prev month's last day
+      var ym=parseYM(histMonth);var pm=ym.month-1;var py=ym.year;
+      if(pm<1){pm=12;py--;}
+      var lastDay=dim(py,pm);
+      var prevMk=monthKey(py,pm)+"-"+pad(lastDay);
+      db.collection("daily_gj").doc(prevMk).get().then(function(doc){
+        saveFn(doc.exists?doc.data():null);
+      });
+    }
+  }
+
+  // Load rack data for history
+  function loadHistoryWithRacks(mk){
+    var ym=parseYM(mk);
+    var nd=dim(ym.year,ym.month);
+    var gjPromises=[];var rackPromises=[];
+    for(var d=1;d<=nd;d++){
+      var dk=mk+"-"+pad(d);
+      gjPromises.push(db.collection("daily_gj").doc(dk).get().then(function(doc){return doc.exists?doc.data():null;}));
+      rackPromises.push(db.collection("racks").doc(dk).get().then(function(doc){return doc.exists?doc.data():null;}));
+    }
+    Promise.all(gjPromises).then(function(gjResults){
+      Promise.all(rackPromises).then(function(rackResults){
+        var combined=gjResults.map(function(g,i){
+          if(!g) g={};
+          g._rack=rackResults[i]?rackResults[i].count:null;
+          return g;
+        });
+        setHistData(combined);
+      });
+    });
+  }
+
   if(page==="admin"){
     var hmYM=parseYM(histMonth);
     var hmDays=dim(hmYM.year,hmYM.month);
-    var dailyTotal=0;var invoiceTotal=0;var gjSum=0;
+    var dailyTotal=0;var invoiceTotal=0;var gjSum=0;var rackSum=0;
     histData.forEach(function(d){
       if(d&&d.total_gj&&d.total_gj>0){
         gjSum+=d.total_gj;
         dailyTotal+=d.sales_daily||0;
         invoiceTotal+=d.sales_invoice||0;
       }
+      if(d&&d._rack) rackSum+=d._rack;
     });
 
     return React.createElement("div",{style:{minHeight:"100vh",background:"#FFF8E1"}},
@@ -396,8 +468,9 @@ function App(){
           var active=adminTab===t[0];
           return React.createElement("button",{key:t[0],onClick:function(){
             setAdminTab(t[0]);
+            if(t[0]==="history") loadHistoryWithRacks(histMonth);
             if(t[0]==="monthly") loadMonthList();
-            if(t[0]==="invoice") loadInvoice(invoiceMonth);
+            if(t[0]==="invoice"){loadMonthList();loadInvoice(invoiceMonth);}
           },style:{flex:1,padding:"12px",border:"none",background:active?"#FFF3E0":"#fff",fontWeight:active?700:400,fontSize:13,cursor:"pointer",color:active?"#E65100":"#999",borderBottom:active?"3px solid #E65100":"none"}},t[1]);
         })
       ),
@@ -408,53 +481,65 @@ function App(){
             React.createElement("button",{onClick:function(){
               var ym=parseYM(histMonth);var nm=ym.month-1;var ny=ym.year;
               if(nm<1){nm=12;ny--;}
-              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistory(nk);
+              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistoryWithRacks(nk);
             },style:{padding:"8px 16px",borderRadius:8,border:"1px solid #E65100",background:"#fff",color:"#E65100",fontSize:14,fontWeight:700,cursor:"pointer"}},"\u25C0"),
             React.createElement("span",{style:{fontSize:18,fontWeight:800,color:"#333",flex:1,textAlign:"center"}},hmYM.year+"年"+hmYM.month+"月"),
             React.createElement("button",{onClick:function(){
               var ym=parseYM(histMonth);var nm=ym.month+1;var ny=ym.year;
               if(nm>12){nm=1;ny++;}
-              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistory(nk);
+              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistoryWithRacks(nk);
             },style:{padding:"8px 16px",borderRadius:8,border:"1px solid #E65100",background:"#fff",color:"#E65100",fontSize:14,fontWeight:700,cursor:"pointer"}},"\u25B6")
           ),
           // Summary
-          React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:16,marginBottom:12,display:"flex",gap:12,flexWrap:"wrap"}},
-            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
-              React.createElement("div",{style:{fontSize:11,color:"#999"}},"月間GJ"),
-              React.createElement("div",{style:{fontSize:24,fontWeight:900,color:"#E65100"}},gjSum.toFixed(2))
+          React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:16,marginBottom:12,display:"flex",gap:8,flexWrap:"wrap"}},
+            React.createElement("div",{style:{flex:1,minWidth:80,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:10,color:"#999"}},"月間GJ"),
+              React.createElement("div",{style:{fontSize:20,fontWeight:900,color:"#E65100"}},gjSum.toFixed(1))
             ),
-            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
-              React.createElement("div",{style:{fontSize:11,color:"#999"}},"朝礼用(@3,050)"),
-              React.createElement("div",{style:{fontSize:18,fontWeight:800,color:"#333"}},"\u00A5"+dailyTotal.toLocaleString())
+            React.createElement("div",{style:{flex:1,minWidth:80,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:10,color:"#999"}},"@3,050"),
+              React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#333"}},"\u00A5"+dailyTotal.toLocaleString())
             ),
-            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
-              React.createElement("div",{style:{fontSize:11,color:"#999"}},"請求用(@3,300)"),
-              React.createElement("div",{style:{fontSize:18,fontWeight:800,color:"#C62828"}},"\u00A5"+invoiceTotal.toLocaleString())
+            React.createElement("div",{style:{flex:1,minWidth:80,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:10,color:"#999"}},"@3,300"),
+              React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#C62828"}},"\u00A5"+invoiceTotal.toLocaleString())
+            ),
+            React.createElement("div",{style:{flex:1,minWidth:80,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:10,color:"#999"}},"ラック計"),
+              React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#1565C0"}},rackSum)
             )
           ),
-          // Daily table
+          // Daily table with editable rows
           React.createElement("div",{style:{background:"#fff",borderRadius:12,overflowX:"auto"}},
             React.createElement("table",{style:{borderCollapse:"collapse",width:"100%",fontSize:11}},
               React.createElement("thead",null,
                 React.createElement("tr",null,
-                  ["日","1号機","2号機","GJ","@3,050","@3,300","ラック","入力者"].map(function(h,i){
-                    return React.createElement("th",{key:i,style:{padding:"8px 4px",background:"#E65100",color:"#fff",fontSize:10,border:"1px solid #ddd",whiteSpace:"nowrap"}},h);
+                  ["日","1号機","2号機","GJ","@3,300","ラック","保存"].map(function(h,i){
+                    return React.createElement("th",{key:i,style:{padding:"6px 3px",background:"#E65100",color:"#fff",fontSize:10,border:"1px solid #ddd",whiteSpace:"nowrap"}},h);
                   })
                 )
               ),
               React.createElement("tbody",null,
                 Array.from({length:hmDays},function(_,i){return i;}).map(function(i){
-                  var d=histData[i];
-                  var dk=histMonth+"-"+pad(i+1);
-                  return React.createElement("tr",{key:i,style:{background:d&&d.total_gj>0?"#fff":"#fafafa"}},
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center",fontWeight:600}},i+1),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#0000FF"}},d?d.b1_display:""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#0000FF"}},d?d.b2_display:""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",fontWeight:700}},d&&d.total_gj?d.total_gj.toFixed(2):""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},d&&d.sales_daily?"\u00A5"+d.sales_daily.toLocaleString():""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#C62828",fontWeight:600}},d&&d.sales_invoice?"\u00A5"+d.sales_invoice.toLocaleString():""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center"}},""),
-                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center",fontSize:10}},d?d.userName:"")
+                  var d=histData[i]||{};
+                  var dayNum=i+1;
+                  var hasData=d.total_gj&&d.total_gj>0;
+                  return React.createElement("tr",{key:i,style:{background:hasData?"#fff":"#fafafa"}},
+                    React.createElement("td",{style:{padding:"3px 4px",border:"1px solid #eee",textAlign:"center",fontWeight:600,fontSize:12}},dayNum),
+                    React.createElement("td",{style:{padding:"2px",border:"1px solid #eee"}},
+                      React.createElement("input",{id:"adm-b1-"+dayNum,type:"number",step:"0.1",defaultValue:d.b1_display||"",style:{width:70,padding:"4px",border:"1px solid #ddd",borderRadius:4,fontSize:11,textAlign:"right"},placeholder:"-"})
+                    ),
+                    React.createElement("td",{style:{padding:"2px",border:"1px solid #eee"}},
+                      React.createElement("input",{id:"adm-b2-"+dayNum,type:"number",step:"0.1",defaultValue:d.b2_display||"",style:{width:70,padding:"4px",border:"1px solid #ddd",borderRadius:4,fontSize:11,textAlign:"right"},placeholder:"-"})
+                    ),
+                    React.createElement("td",{style:{padding:"3px 4px",border:"1px solid #eee",textAlign:"right",fontWeight:700,fontSize:12}},hasData?d.total_gj.toFixed(2):""),
+                    React.createElement("td",{style:{padding:"3px 4px",border:"1px solid #eee",textAlign:"right",color:"#C62828",fontWeight:600}},d.sales_invoice?"\u00A5"+d.sales_invoice.toLocaleString():""),
+                    React.createElement("td",{style:{padding:"2px",border:"1px solid #eee"}},
+                      React.createElement("input",{id:"adm-rk-"+dayNum,type:"number",defaultValue:d._rack!=null?d._rack:"",style:{width:40,padding:"4px",border:"1px solid #ddd",borderRadius:4,fontSize:11,textAlign:"center"},placeholder:"-"})
+                    ),
+                    React.createElement("td",{style:{padding:"2px 3px",border:"1px solid #eee",textAlign:"center"}},
+                      React.createElement("button",{onClick:(function(dn){return function(){adminSaveDay(dn);};})(dayNum),style:{padding:"4px 8px",borderRadius:4,border:"none",background:"#E65100",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer"}},"保存")
+                    )
                   );
                 })
               )
@@ -627,15 +712,6 @@ function App(){
         )
       ),
       React.createElement("button",{onClick:saveGJ,style:{width:"100%",padding:"16px",borderRadius:12,border:"none",background:hasToday?"#FF8F00":"#E65100",color:"#fff",fontSize:18,fontWeight:800,cursor:"pointer",boxShadow:"0 3px 10px rgba(230,81,0,0.3)"}},hasToday?"更新する":"記録する")
-    ),
-
-    // Rack input
-    React.createElement("div",{style:{margin:"12px 16px",background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,0.08)"}},
-      React.createElement("h3",{style:{fontSize:16,fontWeight:800,color:"#333",marginBottom:12}},"\uD83D\uDCE6 今日の交換ラック数"),
-      React.createElement("div",{style:{display:"flex",gap:12,alignItems:"center"}},
-        React.createElement("input",{type:"number",value:todayRacks,onChange:function(e){setTodayRacks(e.target.value);setRackSaved(false);},placeholder:"0",style:{flex:1,padding:"14px",borderRadius:10,border:"2px solid #ddd",fontSize:20,fontWeight:700,textAlign:"center"}}),
-        React.createElement("button",{onClick:saveRacks,style:{padding:"14px 24px",borderRadius:10,border:"none",background:rackSaved?"#43A047":"#1565C0",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}},rackSaved?"\u2713 済":"保存")
-      )
     ),
 
     // Logout
