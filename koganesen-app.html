@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#E65100">
+<title>黄金泉 売上管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#FFF8E1;-webkit-tap-highlight-color:transparent}
+input[type=number]{-moz-appearance:textfield}
+input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyACvyorfx-KEgUnlfx8A7tsWLdJLyajG54",
+  authDomain:"koganesen-uriage.firebaseapp.com",
+  projectId:"koganesen-uriage",
+  storageBucket:"koganesen-uriage.firebasestorage.app",
+  messagingSenderId:"608316085873",
+  appId:"1:608316085873:web:46d0c10ebb54defeabadd0"
+});
+var db=firebase.firestore();
+</script>
+<script type="text/babel">
+var useState=React.useState;
+var useEffect=React.useEffect;
+var useRef=React.useRef;
+
+var MEMBERS=[
+  {id:"hamabe",name:"浜辺",pin:"1111"},
+  {id:"kambara",name:"神原",pin:"2222"},
+  {id:"yamamoto",name:"山本",pin:"3333"},
+  {id:"tomioka",name:"富岡",pin:"4444"},
+  {id:"gushiken",name:"具志堅",pin:"5555"},
+  {id:"handa",name:"半田",pin:"6666"}
+];
+var RATE_DAILY=3050;
+var RATE_INVOICE=3300;
+var RATE_EXCL=3000;
+
+function pad(n){return n<10?"0"+n:""+n}
+function fmtDate(d){
+  return d.getFullYear()+"/"+pad(d.getMonth()+1)+"/"+pad(d.getDate());
+}
+function todayKey(){
+  var d=new Date();
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+}
+function monthKey(y,m){return y+"-"+pad(m)}
+function prevMonthKey(){
+  var d=new Date();
+  var y=d.getFullYear();
+  var m=d.getMonth();
+  if(m===0){m=12;y--;}
+  return monthKey(y,m);
+}
+function curMonthKey(){
+  var d=new Date();
+  return monthKey(d.getFullYear(),d.getMonth()+1);
+}
+function isFirstThreeDays(){
+  return new Date().getDate()<=3;
+}
+function dim(y,m){return new Date(y,m,0).getDate();}
+function parseYM(mk){
+  var p=mk.split("-");
+  return {year:parseInt(p[0]),month:parseInt(p[1])};
+}
+
+function App(){
+  var _p=useState("select"),page=_p[0],setPage=_p[1];
+  var _u=useState(null),user=_u[0],setUser=_u[1];
+  var _pin=useState(""),pin=_pin[0],setPin=_pin[1];
+  var _su=useState(null),selUser=_su[0],setSelUser=_su[1];
+  var _msg=useState(null),msg=_msg[0],setMsg=_msg[1];
+  var _now=useState(new Date()),now=_now[0],setNow=_now[1];
+
+  // Daily GJ input
+  var _b1=useState(""),b1=_b1[0],setB1=_b1[1];
+  var _b2=useState(""),b2=_b2[0],setB2=_b2[1];
+  var _todayData=useState(null),todayData=_todayData[0],setTodayData=_todayData[1];
+  var _yesterdayData=useState(null),yesterdayData=_yesterdayData[0],setYesterdayData=_yesterdayData[1];
+  var _todayRacks=useState(""),todayRacks=_todayRacks[0],setTodayRacks=_todayRacks[1];
+  var _rackSaved=useState(false),rackSaved=_rackSaved[0],setRackSaved=_rackSaved[1];
+
+  // Monthly
+  var _monthlyData=useState(null),monthlyData=_monthlyData[0],setMonthlyData=_monthlyData[1];
+  var _prevMonthly=useState(null),prevMonthly=_prevMonthly[0],setPrevMonthly=_prevMonthly[1];
+  var _mPower=useState(""),mPower=_mPower[0],setMPower=_mPower[1];
+  var _mRacks=useState(""),mRacks=_mRacks[0],setMRacks=_mRacks[1];
+  var _showAlert=useState(false),showAlert=_showAlert[0],setShowAlert=_showAlert[1];
+
+  // History
+  var _histMonth=useState(curMonthKey()),histMonth=_histMonth[0],setHistMonth=_histMonth[1];
+  var _histData=useState([]),histData=_histData[0],setHistData=_histData[1];
+  var _monthList=useState([]),monthList=_monthList[0],setMonthList=_monthList[1];
+  var _invoiceMonth=useState(prevMonthKey()),invoiceMonth=_invoiceMonth[0],setInvoiceMonth=_invoiceMonth[1];
+  var _invoiceData=useState(null),invoiceData=_invoiceData[0],setInvoiceData=_invoiceData[1];
+
+  useEffect(function(){
+    var t=setInterval(function(){setNow(new Date());},1000);
+    return function(){clearInterval(t);};
+  },[]);
+
+  function loadToday(){
+    var tk=todayKey();
+    db.collection("daily_gj").doc(tk).get().then(function(doc){
+      if(doc.exists) setTodayData(doc.data());
+      else setTodayData(null);
+    });
+    // yesterday
+    var yd=new Date();yd.setDate(yd.getDate()-1);
+    var yk=yd.getFullYear()+"-"+pad(yd.getMonth()+1)+"-"+pad(yd.getDate());
+    db.collection("daily_gj").doc(yk).get().then(function(doc){
+      if(doc.exists) setYesterdayData(doc.data());
+      else setYesterdayData(null);
+    });
+    // today's racks
+    db.collection("racks").doc(tk).get().then(function(doc){
+      if(doc.exists){
+        setTodayRacks(""+doc.data().count);
+        setRackSaved(true);
+      }else{
+        setTodayRacks("");
+        setRackSaved(false);
+      }
+    });
+    // monthly alert check
+    var mk=curMonthKey();
+    db.collection("monthly").doc(mk).get().then(function(doc){
+      if(doc.exists) setMonthlyData(doc.data());
+      else setMonthlyData(null);
+    });
+    var pmk=prevMonthKey();
+    db.collection("monthly").doc(pmk).get().then(function(doc){
+      if(doc.exists) setPrevMonthly(doc.data());
+      else setPrevMonthly(null);
+    });
+    // Show alert if 1st-3rd and monthly not entered
+    if(isFirstThreeDays()){
+      db.collection("monthly").doc(mk).get().then(function(doc){
+        if(!doc.exists||!doc.data().b1_display){
+          setShowAlert(true);
+        }
+      });
+    }
+  }
+
+  function loadHistory(mk){
+    var ym=parseYM(mk);
+    var nd=dim(ym.year,ym.month);
+    var promises=[];
+    for(var d=1;d<=nd;d++){
+      var dk=mk+"-"+pad(d);
+      promises.push(
+        db.collection("daily_gj").doc(dk).get().then(function(doc){
+          if(doc.exists) return doc.data();
+          return null;
+        })
+      );
+    }
+    Promise.all(promises).then(function(results){
+      setHistData(results);
+    });
+  }
+
+  function loadMonthList(){
+    db.collection("monthly").orderBy("monthKey","desc").limit(24).get().then(function(snap){
+      var list=[];
+      snap.forEach(function(doc){list.push(doc.data());});
+      setMonthList(list);
+    });
+  }
+
+  function loadInvoice(mk){
+    db.collection("monthly").doc(mk).get().then(function(doc){
+      if(doc.exists) setInvoiceData(doc.data());
+      else setInvoiceData(null);
+    });
+  }
+
+  function login(m){
+    setUser(m);setPage("main");setMsg(null);
+    loadToday();
+  }
+  function logout(){
+    setUser(null);setPage("select");setPin("");
+    setSelUser(null);setMsg(null);
+    setB1("");setB2("");
+    setTodayData(null);setYesterdayData(null);
+  }
+
+  // Save daily GJ
+  function saveGJ(){
+    var v1=parseFloat(b1);var v2=parseFloat(b2);
+    if(isNaN(v1)||isNaN(v2)){
+      setMsg("数値を入力してください");
+      setTimeout(function(){setMsg(null);},2000);
+      return;
+    }
+    var tk=todayKey();
+    var now2=new Date();
+    var data={
+      dateKey:tk,
+      b1_display:v1,
+      b2_display:v2,
+      userId:user.id,
+      userName:user.name,
+      time:now2.getTime(),
+      timeStr:pad(now2.getHours())+":"+pad(now2.getMinutes())
+    };
+    // calc diff from yesterday
+    if(yesterdayData){
+      data.b1_gj=Math.round((v1-yesterdayData.b1_display)*100)/100;
+      data.b2_gj=Math.round((v2-yesterdayData.b2_display)*100)/100;
+      data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+      data.sales_daily=Math.round(data.total_gj*RATE_DAILY);
+      data.sales_invoice=Math.round(data.total_gj*RATE_INVOICE);
+    }
+    db.collection("daily_gj").doc(tk).set(data).then(function(){
+      setTodayData(data);
+      setMsg("GJ記録しました");
+      setTimeout(function(){setMsg(null);},3000);
+    });
+    // Also update monthly 1st-day display if it's 1st
+    if(now2.getDate()===1){
+      var mk=curMonthKey();
+      db.collection("monthly").doc(mk).set({
+        monthKey:mk,
+        b1_display:v1,
+        b2_display:v2,
+        updated:now2.getTime()
+      },{merge:true});
+    }
+  }
+
+  // Save racks
+  function saveRacks(){
+    var cnt=parseInt(todayRacks);
+    if(isNaN(cnt)||cnt<0){
+      setMsg("ラック数を入力してください");
+      setTimeout(function(){setMsg(null);},2000);
+      return;
+    }
+    var tk=todayKey();
+    db.collection("racks").doc(tk).set({
+      dateKey:tk,count:cnt,
+      userId:user.id,userName:user.name,
+      time:new Date().getTime()
+    }).then(function(){
+      setRackSaved(true);
+      setMsg("ラック数を記録しました");
+      setTimeout(function(){setMsg(null);},3000);
+    });
+  }
+
+  // Save monthly data
+  function saveMonthly(){
+    var mk=curMonthKey();
+    var v1=parseFloat(b1);var v2=parseFloat(b2);
+    var pw=parseInt(mPower);
+    var rk=parseInt(mRacks);
+    var data={monthKey:mk,updated:new Date().getTime()};
+    if(!isNaN(v1)) data.b1_display=v1;
+    if(!isNaN(v2)) data.b2_display=v2;
+    if(!isNaN(pw)) data.power_meter=pw;
+    if(!isNaN(rk)) data.prev_month_racks=rk;
+    // Calc prev month invoice
+    if(prevMonthly&&data.b1_display&&data.b2_display){
+      data.prev_b1_gj=Math.round((data.b1_display-(prevMonthly.b1_display||0))*100)/100;
+      data.prev_b2_gj=Math.round((data.b2_display-(prevMonthly.b2_display||0))*100)/100;
+      data.prev_total_gj=Math.round((data.prev_b1_gj+data.prev_b2_gj)*100)/100;
+      data.prev_invoice=Math.round(data.prev_total_gj*RATE_INVOICE);
+      data.prev_excl=Math.round(data.prev_total_gj*RATE_EXCL);
+      data.prev_tax=data.prev_invoice-data.prev_excl;
+      data.prev_consumption=Math.round(data.prev_total_gj/8.2*10)/10;
+    }
+    if(prevMonthly&&data.power_meter&&prevMonthly.power_meter){
+      data.prev_power_usage=data.power_meter-prevMonthly.power_meter;
+    }
+    db.collection("monthly").doc(mk).set(data,{merge:true}).then(function(){
+      setMonthlyData(data);
+      setShowAlert(false);
+      setMsg("月次データを保存しました");
+      setTimeout(function(){setMsg(null);},3000);
+      loadToday();
+    });
+  }
+
+  // PIN pad
+  function pinPad(onComplete,onBack){
+    return React.createElement("div",{style:{textAlign:"center"}},
+      React.createElement("div",{style:{display:"flex",justifyContent:"center",gap:12,marginBottom:24}},
+        [0,1,2,3].map(function(i){
+          return React.createElement("div",{key:i,style:{width:52,height:60,borderRadius:10,background:"rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:700,color:"#fff"}},
+            pin.length>i?"\u25CF":"");
+        })
+      ),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,maxWidth:280,margin:"0 auto"}},
+        [1,2,3,4,5,6,7,8,9,"",0,"\u232B"].map(function(n,idx){
+          if(n==="") return React.createElement("div",{key:idx});
+          return React.createElement("button",{key:idx,onClick:function(){
+            if(n==="\u232B") setPin(pin.slice(0,-1));
+            else if(pin.length<4){
+              var np=pin+n;setPin(np);
+              if(np.length===4) onComplete(np);
+            }
+          },style:{width:"100%",padding:"16px 0",borderRadius:12,border:"none",background:n==="\u232B"?"rgba(255,255,255,0.1)":"rgba(255,255,255,0.22)",color:"#fff",fontSize:24,fontWeight:700,cursor:"pointer"}},n);
+        })
+      ),
+      msg?React.createElement("p",{style:{color:"#EF9A9A",marginTop:16,fontSize:16,fontWeight:600}},msg):null,
+      React.createElement("button",{onClick:onBack,style:{marginTop:24,padding:"12px 32px",borderRadius:10,border:"2px solid #FFCC80",background:"transparent",color:"#FFCC80",fontSize:16,fontWeight:600,cursor:"pointer"}},"\u2190 戻る")
+    );
+  }
+
+  var orangeBg={minHeight:"100vh",background:"linear-gradient(160deg,#E65100,#FF8F00)",display:"flex",flexDirection:"column",alignItems:"center",padding:"40px 20px 20px"};
+
+  // === SELECT PAGE ===
+  if(page==="select"){
+    return React.createElement("div",{style:orangeBg},
+      React.createElement("div",{style:{fontSize:13,color:"#FFCC80",letterSpacing:3,marginBottom:8}},"KOGANESEN"),
+      React.createElement("h1",{style:{fontSize:28,fontWeight:900,color:"#fff",marginBottom:4}},"黄金泉 売上管理"),
+      React.createElement("p",{style:{fontSize:14,color:"#FFE0B2",marginBottom:40}},"ボイラー熱量・売上・請求"),
+      React.createElement("div",{style:{width:"100%",maxWidth:400}},
+        React.createElement("p",{style:{color:"#FFE0B2",fontSize:16,marginBottom:16,textAlign:"center",fontWeight:600}},"名前を選んでください"),
+        MEMBERS.map(function(m){
+          return React.createElement("button",{key:m.id,onClick:function(){setSelUser(m);setPin("");setPage("pin");},style:{width:"100%",padding:"18px 24px",marginBottom:10,borderRadius:14,border:"none",background:"rgba(255,255,255,0.18)",color:"#fff",fontSize:20,fontWeight:800,cursor:"pointer",textAlign:"center",letterSpacing:2}},m.name);
+        }),
+        React.createElement("button",{onClick:function(){setPage("admin_pin");setPin("");setMsg(null);},style:{width:"100%",padding:"14px",marginTop:20,borderRadius:10,border:"2px solid #FFCC80",background:"transparent",color:"#FFCC80",fontSize:14,fontWeight:600,cursor:"pointer"}},"\uD83D\uDD12 管理者ログイン")
+      )
+    );
+  }
+
+  // === PIN PAGE ===
+  if(page==="pin"&&selUser){
+    return React.createElement("div",{style:orangeBg},
+      React.createElement("p",{style:{color:"#fff",fontSize:22,fontWeight:800,marginBottom:4}},selUser.name+" さん"),
+      React.createElement("p",{style:{color:"#FFE0B2",fontSize:16,marginBottom:24}},"4桁の暗証番号を入力"),
+      pinPad(function(np){
+        if(np===selUser.pin) login(selUser);
+        else{setPin("");setMsg("暗証番号が違います");setTimeout(function(){setMsg(null);},2000);}
+      },function(){setSelUser(null);setPin("");setMsg(null);setPage("select");})
+    );
+  }
+
+  // === ADMIN PIN ===
+  if(page==="admin_pin"){
+    return React.createElement("div",{style:Object.assign({},orangeBg,{justifyContent:"center"})},
+      React.createElement("h2",{style:{color:"#fff",fontSize:24,fontWeight:800,marginBottom:8}},"\uD83D\uDD12 管理者ログイン"),
+      React.createElement("p",{style:{color:"#FFE0B2",fontSize:14,marginBottom:24}},"管理者PINを入力"),
+      pinPad(function(np){
+        if(np==="0000"){setPage("admin");loadMonthList();loadHistory(curMonthKey());setPin("");}
+        else{setPin("");setMsg("PINが違います");setTimeout(function(){setMsg(null);},2000);}
+      },function(){setPage("select");setPin("");setMsg(null);})
+    );
+  }
+
+  // === ADMIN PAGE ===
+  if(page==="admin"){
+    var _at=useState("history"),adminTab=_at[0],setAdminTab=_at[1];
+    var hmYM=parseYM(histMonth);
+    var hmDays=dim(hmYM.year,hmYM.month);
+    var dailyTotal=0;var invoiceTotal=0;var gjSum=0;
+    histData.forEach(function(d){
+      if(d&&d.total_gj&&d.total_gj>0){
+        gjSum+=d.total_gj;
+        dailyTotal+=d.sales_daily||0;
+        invoiceTotal+=d.sales_invoice||0;
+      }
+    });
+
+    return React.createElement("div",{style:{minHeight:"100vh",background:"#FFF8E1"}},
+      React.createElement("div",{style:{background:"linear-gradient(135deg,#E65100,#FF8F00)",padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+        React.createElement("div",null,
+          React.createElement("div",{style:{fontSize:11,color:"#FFCC80",letterSpacing:2}},"KOGANESEN"),
+          React.createElement("div",{style:{fontSize:18,fontWeight:800,color:"#fff"}},"\uD83D\uDD12 管理者画面")
+        ),
+        React.createElement("div",{style:{textAlign:"right"}},
+          React.createElement("div",{style:{fontSize:12,color:"#FFE0B2"}},fmtDate(now))
+        )
+      ),
+      msg?React.createElement("div",{style:{padding:"10px 20px",background:"#E65100",color:"#fff",fontSize:14,fontWeight:700,textAlign:"center"}},"\u2713 "+msg):null,
+      // Tabs
+      React.createElement("div",{style:{display:"flex",background:"#fff",borderBottom:"2px solid #eee"}},
+        [["history","日次履歴"],["monthly","月次一覧"],["invoice","請求書"]].map(function(t){
+          var active=adminTab===t[0];
+          return React.createElement("button",{key:t[0],onClick:function(){
+            setAdminTab(t[0]);
+            if(t[0]==="monthly") loadMonthList();
+            if(t[0]==="invoice") loadInvoice(invoiceMonth);
+          },style:{flex:1,padding:"12px",border:"none",background:active?"#FFF3E0":"#fff",fontWeight:active?700:400,fontSize:13,cursor:"pointer",color:active?"#E65100":"#999",borderBottom:active?"3px solid #E65100":"none"}},t[1]);
+        })
+      ),
+      React.createElement("div",{style:{padding:16}},
+        // History tab
+        adminTab==="history"?React.createElement("div",null,
+          React.createElement("div",{style:{display:"flex",gap:8,marginBottom:12,alignItems:"center"}},
+            React.createElement("button",{onClick:function(){
+              var ym=parseYM(histMonth);var nm=ym.month-1;var ny=ym.year;
+              if(nm<1){nm=12;ny--;}
+              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistory(nk);
+            },style:{padding:"8px 16px",borderRadius:8,border:"1px solid #E65100",background:"#fff",color:"#E65100",fontSize:14,fontWeight:700,cursor:"pointer"}},"\u25C0"),
+            React.createElement("span",{style:{fontSize:18,fontWeight:800,color:"#333",flex:1,textAlign:"center"}},hmYM.year+"年"+hmYM.month+"月"),
+            React.createElement("button",{onClick:function(){
+              var ym=parseYM(histMonth);var nm=ym.month+1;var ny=ym.year;
+              if(nm>12){nm=1;ny++;}
+              var nk=monthKey(ny,nm);setHistMonth(nk);loadHistory(nk);
+            },style:{padding:"8px 16px",borderRadius:8,border:"1px solid #E65100",background:"#fff",color:"#E65100",fontSize:14,fontWeight:700,cursor:"pointer"}},"\u25B6")
+          ),
+          // Summary
+          React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:16,marginBottom:12,display:"flex",gap:12,flexWrap:"wrap"}},
+            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:11,color:"#999"}},"月間GJ"),
+              React.createElement("div",{style:{fontSize:24,fontWeight:900,color:"#E65100"}},gjSum.toFixed(2))
+            ),
+            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:11,color:"#999"}},"朝礼用(@3,050)"),
+              React.createElement("div",{style:{fontSize:18,fontWeight:800,color:"#333"}},"\u00A5"+dailyTotal.toLocaleString())
+            ),
+            React.createElement("div",{style:{flex:1,minWidth:120,textAlign:"center"}},
+              React.createElement("div",{style:{fontSize:11,color:"#999"}},"請求用(@3,300)"),
+              React.createElement("div",{style:{fontSize:18,fontWeight:800,color:"#C62828"}},"\u00A5"+invoiceTotal.toLocaleString())
+            )
+          ),
+          // Daily table
+          React.createElement("div",{style:{background:"#fff",borderRadius:12,overflowX:"auto"}},
+            React.createElement("table",{style:{borderCollapse:"collapse",width:"100%",fontSize:11}},
+              React.createElement("thead",null,
+                React.createElement("tr",null,
+                  ["日","1号機","2号機","GJ","@3,050","@3,300","ラック","入力者"].map(function(h,i){
+                    return React.createElement("th",{key:i,style:{padding:"8px 4px",background:"#E65100",color:"#fff",fontSize:10,border:"1px solid #ddd",whiteSpace:"nowrap"}},h);
+                  })
+                )
+              ),
+              React.createElement("tbody",null,
+                Array.from({length:hmDays},function(_,i){return i;}).map(function(i){
+                  var d=histData[i];
+                  var dk=histMonth+"-"+pad(i+1);
+                  return React.createElement("tr",{key:i,style:{background:d&&d.total_gj>0?"#fff":"#fafafa"}},
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center",fontWeight:600}},i+1),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#0000FF"}},d?d.b1_display:""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#0000FF"}},d?d.b2_display:""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",fontWeight:700}},d&&d.total_gj?d.total_gj.toFixed(2):""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},d&&d.sales_daily?"\u00A5"+d.sales_daily.toLocaleString():""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#C62828",fontWeight:600}},d&&d.sales_invoice?"\u00A5"+d.sales_invoice.toLocaleString():""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center"}},""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center",fontSize:10}},d?d.userName:"")
+                  );
+                })
+              )
+            )
+          )
+        ):null,
+
+        // Monthly tab
+        adminTab==="monthly"?React.createElement("div",null,
+          React.createElement("h2",{style:{fontSize:16,fontWeight:700,color:"#333",marginBottom:12}},"月次データ一覧"),
+          React.createElement("div",{style:{background:"#fff",borderRadius:12,overflowX:"auto"}},
+            React.createElement("table",{style:{borderCollapse:"collapse",width:"100%",fontSize:11}},
+              React.createElement("thead",null,
+                React.createElement("tr",null,
+                  ["月","1号機GJ","2号機GJ","合計GJ","請求額","電力(kW)","ラック数","GJ/ラック"].map(function(h,i){
+                    return React.createElement("th",{key:i,style:{padding:"8px 4px",background:"#E65100",color:"#fff",fontSize:10,border:"1px solid #ddd",whiteSpace:"nowrap"}},h);
+                  })
+                )
+              ),
+              React.createElement("tbody",null,
+                monthList.map(function(m,i){
+                  var gjr=m.prev_month_racks&&m.prev_total_gj?(m.prev_total_gj/m.prev_month_racks).toFixed(2):"";
+                  return React.createElement("tr",{key:i},
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center",fontWeight:700}},m.monthKey),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},m.prev_b1_gj||""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},m.prev_b2_gj||""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",fontWeight:700}},m.prev_total_gj?m.prev_total_gj.toFixed(2):""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right",color:"#C62828",fontWeight:700}},m.prev_invoice?"\u00A5"+m.prev_invoice.toLocaleString():""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},m.prev_power_usage||""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"center"}},m.prev_month_racks||""),
+                    React.createElement("td",{style:{padding:"4px 6px",border:"1px solid #eee",textAlign:"right"}},gjr)
+                  );
+                })
+              )
+            )
+          )
+        ):null,
+
+        // Invoice tab
+        adminTab==="invoice"?React.createElement("div",null,
+          React.createElement("h2",{style:{fontSize:16,fontWeight:700,color:"#333",marginBottom:12}},"請求書プレビュー"),
+          React.createElement("div",{style:{display:"flex",gap:8,marginBottom:12}},
+            React.createElement("select",{value:invoiceMonth,onChange:function(e){setInvoiceMonth(e.target.value);loadInvoice(e.target.value);},style:{flex:1,padding:"10px",borderRadius:8,border:"2px solid #E65100",fontSize:14,fontWeight:700}},
+              monthList.map(function(m){
+                return React.createElement("option",{key:m.monthKey,value:m.monthKey},m.monthKey);
+              })
+            )
+          ),
+          invoiceData&&invoiceData.prev_invoice?React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:20}},
+            React.createElement("div",{style:{textAlign:"center",marginBottom:16}},
+              React.createElement("div",{style:{fontSize:12,color:"#999"}},"請求書"),
+              React.createElement("div",{style:{fontSize:20,fontWeight:800,color:"#333"}},parseYM(invoiceMonth).year+"年"+parseYM(invoiceMonth).month+"月1日発行"),
+              React.createElement("div",{style:{fontSize:14,color:"#666",marginTop:4}},"湯～とぴあ 黄金泉 御中")
+            ),
+            React.createElement("div",{style:{borderTop:"2px solid #E65100",paddingTop:16}},
+              React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:13}},
+                React.createElement("tbody",null,
+                  [
+                    ["1号機(GJ)",invoiceData.prev_b1_gj],
+                    ["2号機(GJ)",invoiceData.prev_b2_gj],
+                    ["合計(GJ)",invoiceData.prev_total_gj?invoiceData.prev_total_gj.toFixed(2):""],
+                    ["薪消費量(t)",invoiceData.prev_consumption],
+                    ["交換ラック数",invoiceData.prev_month_racks||""],
+                    ["電力使用量(kW)",invoiceData.prev_power_usage||""]
+                  ].map(function(row,i){
+                    return React.createElement("tr",{key:i},
+                      React.createElement("td",{style:{padding:"8px 12px",borderBottom:"1px solid #eee",fontWeight:600,color:"#555"}},row[0]),
+                      React.createElement("td",{style:{padding:"8px 12px",borderBottom:"1px solid #eee",textAlign:"right",fontWeight:600}},row[1])
+                    );
+                  })
+                )
+              ),
+              React.createElement("div",{style:{marginTop:16,padding:16,background:"#FFEBEE",borderRadius:8}},
+                React.createElement("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:8}},
+                  React.createElement("span",{style:{fontSize:14}},"税抜(@3,000)"),
+                  React.createElement("span",{style:{fontSize:14,fontWeight:700}},"\u00A5"+(invoiceData.prev_excl||0).toLocaleString())
+                ),
+                React.createElement("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:8}},
+                  React.createElement("span",{style:{fontSize:14}},"消費税(10%)"),
+                  React.createElement("span",{style:{fontSize:14,fontWeight:700}},"\u00A5"+(invoiceData.prev_tax||0).toLocaleString())
+                ),
+                React.createElement("div",{style:{display:"flex",justifyContent:"space-between",borderTop:"2px solid #C62828",paddingTop:8}},
+                  React.createElement("span",{style:{fontSize:18,fontWeight:900,color:"#C62828"}},"合計"),
+                  React.createElement("span",{style:{fontSize:24,fontWeight:900,color:"#C62828"}},"\u00A5"+(invoiceData.prev_invoice||0).toLocaleString())
+                )
+              )
+            )
+          ):React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:32,textAlign:"center",color:"#999"}},"データがありません")
+        ):null
+      ),
+      React.createElement("div",{style:{padding:"0 16px 40px",textAlign:"center"}},
+        React.createElement("button",{onClick:function(){setPage("select");setPin("");},style:{padding:"14px 40px",borderRadius:10,border:"2px solid #bbb",background:"#fff",color:"#666",fontSize:16,fontWeight:600,cursor:"pointer"}},"ログアウト")
+      )
+    );
+  }
+
+  // === MAIN PAGE ===
+  var hasToday=todayData&&todayData.total_gj!==undefined;
+  var gjToday=hasToday?todayData.total_gj:null;
+  var salesDaily=hasToday?todayData.sales_daily:null;
+  var salesInv=hasToday?todayData.sales_invoice:null;
+
+  // Monthly alert
+  var alertEl=null;
+  if(showAlert){
+    alertEl=React.createElement("div",{style:{margin:"12px 16px",padding:16,background:"#FFEBEE",borderRadius:12,border:"2px solid #C62828"}},
+      React.createElement("div",{style:{fontSize:16,fontWeight:800,color:"#C62828",marginBottom:8}},"\u26A0 月初データ入力が必要です"),
+      React.createElement("div",{style:{fontSize:13,color:"#555",marginBottom:12}},"電力計の数値と先月の交換ラック数を入力してください"),
+      React.createElement("div",{style:{marginBottom:12}},
+        React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#333",marginBottom:4}},"電力計（メーター表示値）"),
+        React.createElement("input",{type:"number",value:mPower,onChange:function(e){setMPower(e.target.value);},placeholder:"例: 542789",style:{width:"100%",padding:"12px",borderRadius:8,border:"2px solid #ddd",fontSize:18,fontWeight:700,textAlign:"center"}})
+      ),
+      React.createElement("div",{style:{marginBottom:12}},
+        React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#333",marginBottom:4}},"先月の交換ラック数（合計）"),
+        React.createElement("input",{type:"number",value:mRacks,onChange:function(e){setMRacks(e.target.value);},placeholder:"例: 54",style:{width:"100%",padding:"12px",borderRadius:8,border:"2px solid #ddd",fontSize:18,fontWeight:700,textAlign:"center"}})
+      ),
+      React.createElement("button",{onClick:saveMonthly,style:{width:"100%",padding:"14px",borderRadius:10,border:"none",background:"#C62828",color:"#fff",fontSize:16,fontWeight:800,cursor:"pointer"}},"月次データを保存")
+    );
+  }
+
+  return React.createElement("div",{style:{minHeight:"100vh",background:"#FFF8E1"}},
+    // Header
+    React.createElement("div",{style:{background:"linear-gradient(135deg,#E65100,#FF8F00)",padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+      React.createElement("div",null,
+        React.createElement("div",{style:{fontSize:11,color:"#FFCC80",letterSpacing:2}},"KOGANESEN"),
+        React.createElement("div",{style:{fontSize:20,fontWeight:800,color:"#fff",letterSpacing:1}},user?user.name:"")
+      ),
+      React.createElement("div",{style:{textAlign:"right"}},
+        React.createElement("div",{style:{fontSize:24,fontWeight:900,color:"#fff",fontFamily:"'Courier New',monospace"}},pad(now.getHours())+":"+pad(now.getMinutes())),
+        React.createElement("div",{style:{fontSize:12,color:"#FFE0B2"}},fmtDate(now))
+      )
+    ),
+    msg?React.createElement("div",{style:{padding:"14px 20px",background:"#E65100",color:"#fff",fontSize:18,fontWeight:700,textAlign:"center",letterSpacing:1}},"\u2713 "+msg):null,
+    alertEl,
+    // Today's result display
+    hasToday?React.createElement("div",{style:{margin:"12px 16px",background:"linear-gradient(135deg,#FF6F00,#FF8F00)",borderRadius:16,padding:20,color:"#fff"}},
+      React.createElement("div",{style:{fontSize:13,opacity:0.8,marginBottom:4}},"今日の売上 ("+todayData.timeStr+" 入力)"),
+      React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:12}},
+        React.createElement("div",{style:{fontSize:48,fontWeight:900}},gjToday!==null?gjToday.toFixed(2):"--"),
+        React.createElement("div",{style:{fontSize:16,fontWeight:600}},"GJ")
+      ),
+      React.createElement("div",{style:{display:"flex",gap:12}},
+        React.createElement("div",{style:{flex:1,background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"10px 12px",textAlign:"center"}},
+          React.createElement("div",{style:{fontSize:10,opacity:0.8}},"朝礼用 @3,050"),
+          React.createElement("div",{style:{fontSize:20,fontWeight:800}},salesDaily!==null?"\u00A5"+salesDaily.toLocaleString():"--")
+        ),
+        React.createElement("div",{style:{flex:1,background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"10px 12px",textAlign:"center"}},
+          React.createElement("div",{style:{fontSize:10,opacity:0.8}},"請求用 @3,300"),
+          React.createElement("div",{style:{fontSize:20,fontWeight:800}},salesInv!==null?"\u00A5"+salesInv.toLocaleString():"--")
+        )
+      ),
+      React.createElement("div",{style:{marginTop:12,display:"flex",gap:12,fontSize:12,opacity:0.8}},
+        React.createElement("span",null,"1号機: "+(todayData.b1_gj||"--")+" GJ"),
+        React.createElement("span",null,"2号機: "+(todayData.b2_gj||"--")+" GJ")
+      )
+    ):null,
+
+    // GJ Input form
+    React.createElement("div",{style:{margin:"12px 16px",background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,0.08)"}},
+      React.createElement("h3",{style:{fontSize:16,fontWeight:800,color:"#333",marginBottom:4}},"\uD83D\uDD25 ボイラー表示値入力"),
+      React.createElement("p",{style:{fontSize:12,color:"#999",marginBottom:16}},yesterdayData?"昨日: 1号機="+yesterdayData.b1_display+" / 2号機="+yesterdayData.b2_display:"昨日のデータなし(初回は差分計算されません)"),
+      React.createElement("div",{style:{display:"flex",gap:12,marginBottom:12}},
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#E65100",marginBottom:4}},"1号機"),
+          React.createElement("input",{type:"number",step:"0.1",value:b1,onChange:function(e){setB1(e.target.value);},placeholder:"例: 17531.4",style:{width:"100%",padding:"14px",borderRadius:10,border:"2px solid #E65100",fontSize:18,fontWeight:700,textAlign:"center"}})
+        ),
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#E65100",marginBottom:4}},"2号機"),
+          React.createElement("input",{type:"number",step:"0.1",value:b2,onChange:function(e){setB2(e.target.value);},placeholder:"例: 8067.37",style:{width:"100%",padding:"14px",borderRadius:10,border:"2px solid #E65100",fontSize:18,fontWeight:700,textAlign:"center"}})
+        )
+      ),
+      React.createElement("button",{onClick:saveGJ,style:{width:"100%",padding:"16px",borderRadius:12,border:"none",background:hasToday?"#FF8F00":"#E65100",color:"#fff",fontSize:18,fontWeight:800,cursor:"pointer",boxShadow:"0 3px 10px rgba(230,81,0,0.3)"}},hasToday?"更新する":"記録する")
+    ),
+
+    // Rack input
+    React.createElement("div",{style:{margin:"12px 16px",background:"#fff",borderRadius:16,padding:20,boxShadow:"0 2px 10px rgba(0,0,0,0.08)"}},
+      React.createElement("h3",{style:{fontSize:16,fontWeight:800,color:"#333",marginBottom:12}},"\uD83D\uDCE6 今日の交換ラック数"),
+      React.createElement("div",{style:{display:"flex",gap:12,alignItems:"center"}},
+        React.createElement("input",{type:"number",value:todayRacks,onChange:function(e){setTodayRacks(e.target.value);setRackSaved(false);},placeholder:"0",style:{flex:1,padding:"14px",borderRadius:10,border:"2px solid #ddd",fontSize:20,fontWeight:700,textAlign:"center"}}),
+        React.createElement("button",{onClick:saveRacks,style:{padding:"14px 24px",borderRadius:10,border:"none",background:rackSaved?"#43A047":"#1565C0",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}},rackSaved?"\u2713 済":"保存")
+      )
+    ),
+
+    // Logout
+    React.createElement("div",{style:{padding:"16px 16px 40px",textAlign:"center"}},
+      React.createElement("button",{onClick:logout,style:{padding:"14px 40px",borderRadius:10,border:"2px solid #bbb",background:"#fff",color:"#666",fontSize:16,fontWeight:600,cursor:"pointer"}},"ログアウト")
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
