@@ -99,6 +99,7 @@ function App(){
   var _mPower=useState(""),mPower=_mPower[0],setMPower=_mPower[1];
   var _mRacks=useState(""),mRacks=_mRacks[0],setMRacks=_mRacks[1];
   var _showAlert=useState(false),showAlert=_showAlert[0],setShowAlert=_showAlert[1];
+  var _at=useState("history"),adminTab=_at[0],setAdminTab=_at[1];
 
   // History
   var _histMonth=useState(curMonthKey()),histMonth=_histMonth[0],setHistMonth=_histMonth[1];
@@ -367,7 +368,6 @@ function App(){
 
   // === ADMIN PAGE ===
   if(page==="admin"){
-    var _at=useState("history"),adminTab=_at[0],setAdminTab=_at[1];
     var hmYM=parseYM(histMonth);
     var hmDays=dim(hmYM.year,hmYM.month);
     var dailyTotal=0;var invoiceTotal=0;var gjSum=0;
