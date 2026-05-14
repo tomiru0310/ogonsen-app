@@ -293,7 +293,7 @@ function App(){
     return React.createElement("div",{style:Object.assign({},orangeBg,{justifyContent:"center"})},
       React.createElement("h2",{style:{color:"#fff",fontSize:24,fontWeight:800,marginBottom:8}},"\uD83D\uDD12 管理者ログイン"),
       React.createElement("p",{style:{color:"#FFE0B2",fontSize:14,marginBottom:24}},"管理者PINを入力"),
-      pinPad(function(np){if(np==="0000"){setPage("admin");loadMonthList();loadHistoryWithRacks(curMonthKey());setPin("");}else{setPin("");setMsg("PINが違います");setTimeout(function(){setMsg(null);},2000);}},
+      pinPad(function(np){if(np==="0310"){setPage("admin");loadMonthList();loadHistoryWithRacks(curMonthKey());setPin("");}else{setPin("");setMsg("PINが違います");setTimeout(function(){setMsg(null);},2000);}},
         function(){setPage("select");setPin("");setMsg(null);})
     );
   }
