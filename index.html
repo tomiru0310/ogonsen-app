@@ -257,73 +257,73 @@ function App(){
     if(!isNaN(rk)){
       db.collection("racks").doc(dk).set({dateKey:dk,count:rk,userId:"admin",userName:"管理者",time:new Date().getTime()},{merge:true});
     }
-    if(!isNaN(v1)&&!isNaN(v2)){
-      var data={dateKey:dk,b1_display:v1,b2_display:v2,userId:"admin",userName:"管理者",time:new Date().getTime(),timeStr:"管理者"};
-
-      function calcAndSave(prevB1,prevB2){
-        if(prevB1!=null&&prevB2!=null){
-          data.b1_gj=Math.round((v1-prevB1)*100)/100;
-          data.b2_gj=Math.round((v2-prevB2)*100)/100;
+    if(isNaN(v1)||isNaN(v2)){
+      if(!isNaN(rk)){flash(dayNum+"日のラックを保存しました");loadHistoryWithRacks(histMonth);}
+      return;
+    }
+    var data={dateKey:dk,b1_display:v1,b2_display:v2,userId:"admin",userName:"管理者",time:new Date().getTime(),timeStr:"管理者"};
+    // 前日のdateKeyを計算
+    var prevDk=prevDateKey(dk);
+    console.log("adminSaveDay: day="+dayNum+" dk="+dk+" prevDk="+prevDk+" v1="+v1+" v2="+v2);
+    // 1. まずFirestoreから前日のdaily_gjを取得
+    db.collection("daily_gj").doc(prevDk).get().then(function(prevDoc){
+      console.log("prevDoc exists="+prevDoc.exists,prevDoc.exists?prevDoc.data():null);
+      if(prevDoc.exists&&prevDoc.data().b1_display!=null){
+        var pd=prevDoc.data();
+        data.b1_gj=Math.round((v1-pd.b1_display)*100)/100;
+        data.b2_gj=Math.round((v2-pd.b2_display)*100)/100;
+        data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+        data.sales_invoice=Math.round(data.total_gj*RATE);
+        console.log("Calc from prevDoc: total_gj="+data.total_gj);
+        doSave();
+        return;
+      }
+      // 2. 前日daily_gjなし → 当月monthlyのprevLastDayを探す
+      var dkParts=dk.split("-");var dkY=parseInt(dkParts[0]);var dkM=parseInt(dkParts[1]);
+      var cmk=monthKey(dkY,dkM);
+      console.log("Trying monthly(cur): "+cmk);
+      db.collection("monthly").doc(cmk).get().then(function(cDoc){
+        console.log("monthly(cur) exists="+cDoc.exists,cDoc.exists?cDoc.data():null);
+        if(cDoc.exists&&cDoc.data().prevLastDay_b1!=null){
+          var cd=cDoc.data();
+          data.b1_gj=Math.round((v1-cd.prevLastDay_b1)*100)/100;
+          data.b2_gj=Math.round((v2-cd.prevLastDay_b2)*100)/100;
           data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
           data.sales_invoice=Math.round(data.total_gj*RATE);
+          console.log("Calc from monthly(cur).prevLastDay: total_gj="+data.total_gj);
+          doSave();
+          return;
         }
-        db.collection("daily_gj").doc(dk).set(data).then(function(){
-          if(data.total_gj!=null){
-            flash(dayNum+"日: "+data.total_gj+" GJ / \u00A5"+data.sales_invoice.toLocaleString());
+        // 3. 前月monthlyのlastDayを探す
+        var pmY=dkM===1?dkY-1:dkY;var pmM=dkM===1?12:dkM-1;
+        var pmk=monthKey(pmY,pmM);
+        console.log("Trying monthly(prev): "+pmk);
+        db.collection("monthly").doc(pmk).get().then(function(mDoc){
+          console.log("monthly(prev) exists="+mDoc.exists,mDoc.exists?mDoc.data():null);
+          if(mDoc.exists&&mDoc.data().lastDay_b1!=null){
+            var md=mDoc.data();
+            data.b1_gj=Math.round((v1-md.lastDay_b1)*100)/100;
+            data.b2_gj=Math.round((v2-md.lastDay_b2)*100)/100;
+            data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+            data.sales_invoice=Math.round(data.total_gj*RATE);
+            console.log("Calc from monthly(prev).lastDay: total_gj="+data.total_gj);
           }else{
-            flash(dayNum+"日: 表示値を保存（前日データなし）");
+            console.log("No prev data found anywhere");
           }
-          loadHistoryWithRacks(histMonth);
+          doSave();
         });
-      }
-
-      // まずhistDataから前日を探す
-      if(dayNum>1){
-        var prevDayData=histData[dayNum-2]||{};
-        if(prevDayData.b1_display!=null&&prevDayData.b2_display!=null){
-          calcAndSave(prevDayData.b1_display,prevDayData.b2_display);
+      });
+    });
+    function doSave(){
+      console.log("Saving data:",JSON.stringify(data));
+      db.collection("daily_gj").doc(dk).set(data).then(function(){
+        if(data.total_gj!=null){
+          flash(dayNum+"日: "+data.total_gj+" GJ / \u00A5"+data.sales_invoice.toLocaleString());
         }else{
-          // histDataにない → Firestoreから前日を探す
-          var prevDk=prevDateKey(dk);
-          db.collection("daily_gj").doc(prevDk).get().then(function(doc){
-            if(doc.exists&&doc.data().b1_display!=null){
-              calcAndSave(doc.data().b1_display,doc.data().b2_display);
-            }else{
-              calcAndSave(null,null);
-            }
-          });
+          flash(dayNum+"日: 保存済（前日データなし - 先に前日を入力してください）");
         }
-      }else{
-        // 1日の場合 → 前月末日をFirestoreから取得
-        var prevDk2=prevDateKey(dk);
-        db.collection("daily_gj").doc(prevDk2).get().then(function(doc){
-          if(doc.exists&&doc.data().b1_display!=null){
-            calcAndSave(doc.data().b1_display,doc.data().b2_display);
-          }else{
-            // monthlyのprevLastDayを探す
-            var dkP=dk.split("-");var dkY2=parseInt(dkP[0]);var dkM2=parseInt(dkP[1]);
-            var cmk2=monthKey(dkY2,dkM2);
-            db.collection("monthly").doc(cmk2).get().then(function(cDoc){
-              if(cDoc.exists&&cDoc.data().prevLastDay_b1!=null){
-                calcAndSave(cDoc.data().prevLastDay_b1,cDoc.data().prevLastDay_b2);
-              }else{
-                // 前月monthlyのlastDayを探す
-                var pmY2=dkM2===1?dkY2-1:dkY2;var pmM2=dkM2===1?12:dkM2-1;
-                db.collection("monthly").doc(monthKey(pmY2,pmM2)).get().then(function(mDoc){
-                  if(mDoc.exists&&mDoc.data().lastDay_b1!=null){
-                    calcAndSave(mDoc.data().lastDay_b1,mDoc.data().lastDay_b2);
-                  }else{
-                    calcAndSave(null,null);
-                  }
-                });
-              }
-            });
-          }
-        });
-      }
-    }else if(!isNaN(rk)){
-      flash(dayNum+"日のラックを保存しました");
-      loadHistoryWithRacks(histMonth);
+        loadHistoryWithRacks(histMonth);
+      });
     }
   }
 
