@@ -80,6 +80,8 @@ function App(){
   var _mPower=useState(""),mPower=_mPower[0],setMPower=_mPower[1];
   var _mRacks=useState(""),mRacks=_mRacks[0],setMRacks=_mRacks[1];
   var _showAlert=useState(false),showAlert=_showAlert[0],setShowAlert=_showAlert[1];
+  var _mLastB1=useState(""),mLastB1=_mLastB1[0],setMLastB1=_mLastB1[1];
+  var _mLastB2=useState(""),mLastB2=_mLastB2[0],setMLastB2=_mLastB2[1];
   // Admin
   var _at=useState("history"),adminTab=_at[0],setAdminTab=_at[1];
   var _histMonth=useState(curMonthKey()),histMonth=_histMonth[0],setHistMonth=_histMonth[1];
@@ -170,24 +172,69 @@ function App(){
         data.b2_gj=Math.round((v2-yd.b2_display)*100)/100;
         data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
         data.sales_invoice=Math.round(data.total_gj*RATE);
+        db.collection("daily_gj").doc(tk).set(data).then(function(){
+          setTodayData(data);flash("GJ記録しました");
+        });
+      }else{
+        // 前日データなし → 前月末日のデータを探す（月初対応）
+        // prevMonthのmonthlyデータのlastDay表示値を使う
+        var prevMk=prevMonthKey();
+        db.collection("monthly").doc(prevMk).get().then(function(mDoc){
+          if(mDoc.exists&&mDoc.data().lastDay_b1!==undefined){
+            var md=mDoc.data();
+            data.b1_gj=Math.round((v1-md.lastDay_b1)*100)/100;
+            data.b2_gj=Math.round((v2-md.lastDay_b2)*100)/100;
+            data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+            data.sales_invoice=Math.round(data.total_gj*RATE);
+          }else{
+            // 当月のmonthlyに前月末日データがあるか
+            var curMk=curMonthKey();
+            db.collection("monthly").doc(curMk).get().then(function(cDoc){
+              if(cDoc.exists&&cDoc.data().prevLastDay_b1!==undefined){
+                var cd=cDoc.data();
+                data.b1_gj=Math.round((v1-cd.prevLastDay_b1)*100)/100;
+                data.b2_gj=Math.round((v2-cd.prevLastDay_b2)*100)/100;
+                data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+                data.sales_invoice=Math.round(data.total_gj*RATE);
+              }
+              db.collection("daily_gj").doc(tk).set(data).then(function(){
+                setTodayData(data);flash("GJ記録しました");
+              });
+              return;
+            });
+            return;
+          }
+          db.collection("daily_gj").doc(tk).set(data).then(function(){
+            setTodayData(data);flash("GJ記録しました");
+          });
+        });
+        return;
       }
-      db.collection("daily_gj").doc(tk).set(data).then(function(){
-        setTodayData(data);flash("GJ記録しました");
-      });
     });
   }
 
   // Save monthly
   function saveMonthly(){
     var mk=curMonthKey();var now2=new Date();
-    // Use current b1/b2 from today's data or input
     var v1=parseFloat(b1);var v2=parseFloat(b2);
     var pw=parseInt(mPower);var rk=parseInt(mRacks);
+    var lb1=parseFloat(mLastB1);var lb2=parseFloat(mLastB2);
     var data={monthKey:mk,updated:now2.getTime()};
     if(!isNaN(v1)) data.b1_display=v1;
     if(!isNaN(v2)) data.b2_display=v2;
     if(!isNaN(pw)) data.power_meter=pw;
     if(!isNaN(rk)) data.prev_month_racks=rk;
+    if(!isNaN(lb1)) data.prevLastDay_b1=lb1;
+    if(!isNaN(lb2)) data.prevLastDay_b2=lb2;
+    // Also save to prev month's monthly as lastDay
+    if(!isNaN(lb1)&&!isNaN(lb2)){
+      var pmk=prevMonthKey();
+      db.collection("monthly").doc(pmk).set({lastDay_b1:lb1,lastDay_b2:lb2},{merge:true});
+      // Also save as daily_gj for prev month's last day
+      var prevYM=parseYM(pmk);var lastDay=dim(prevYM.year,prevYM.month);
+      var lastDk=pmk+"-"+pad(lastDay);
+      db.collection("daily_gj").doc(lastDk).set({dateKey:lastDk,b1_display:lb1,b2_display:lb2,userId:"system",userName:"月初入力",time:now2.getTime(),timeStr:"月初入力"},{merge:true});
+    }
     if(prevMonthly&&data.b1_display&&data.b2_display){
       data.prev_b1_gj=Math.round((data.b1_display-(prevMonthly.b1_display||0))*100)/100;
       data.prev_b2_gj=Math.round((data.b2_display-(prevMonthly.b2_display||0))*100)/100;
@@ -230,11 +277,45 @@ function App(){
           data.b2_gj=Math.round((v2-pd.b2_display)*100)/100;
           data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
           data.sales_invoice=Math.round(data.total_gj*RATE);
+          db.collection("daily_gj").doc(dk).set(data).then(function(){
+            flash(dayNum+"日を保存しました");
+            loadHistoryWithRacks(histMonth);
+          });
+        }else{
+          // 前日データなし → 前月のmonthlyからlastDay表示値を探す
+          var dkParts=dk.split("-");var dkY=parseInt(dkParts[0]);var dkM=parseInt(dkParts[1]);
+          var pmY=dkM===1?dkY-1:dkY;var pmM=dkM===1?12:dkM-1;
+          var pmk=monthKey(pmY,pmM);
+          db.collection("monthly").doc(pmk).get().then(function(mDoc){
+            if(mDoc.exists&&mDoc.data().lastDay_b1!==undefined){
+              var md=mDoc.data();
+              data.b1_gj=Math.round((v1-md.lastDay_b1)*100)/100;
+              data.b2_gj=Math.round((v2-md.lastDay_b2)*100)/100;
+              data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+              data.sales_invoice=Math.round(data.total_gj*RATE);
+            }else{
+              // 当月monthlyのprevLastDay
+              var cmk=monthKey(dkY,dkM);
+              db.collection("monthly").doc(cmk).get().then(function(cDoc){
+                if(cDoc.exists&&cDoc.data().prevLastDay_b1!==undefined){
+                  var cd=cDoc.data();
+                  data.b1_gj=Math.round((v1-cd.prevLastDay_b1)*100)/100;
+                  data.b2_gj=Math.round((v2-cd.prevLastDay_b2)*100)/100;
+                  data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+                  data.sales_invoice=Math.round(data.total_gj*RATE);
+                }
+                db.collection("daily_gj").doc(dk).set(data).then(function(){
+                  flash(dayNum+"日を保存しました");loadHistoryWithRacks(histMonth);
+                });
+                return;
+              });
+              return;
+            }
+            db.collection("daily_gj").doc(dk).set(data).then(function(){
+              flash(dayNum+"日を保存しました");loadHistoryWithRacks(histMonth);
+            });
+          });
         }
-        db.collection("daily_gj").doc(dk).set(data).then(function(){
-          flash(dayNum+"日を保存しました");
-          loadHistoryWithRacks(histMonth);
-        });
       });
     }else{
       flash(dayNum+"日のラックを保存しました");
@@ -489,7 +570,15 @@ function App(){
   if(showAlert){
     alertEl=React.createElement("div",{style:{margin:"12px 16px",padding:16,background:"#FFEBEE",borderRadius:12,border:"2px solid #C62828"}},
       React.createElement("div",{style:{fontSize:16,fontWeight:800,color:"#C62828",marginBottom:8}},"\u26A0 月初データ入力が必要です"),
-      React.createElement("div",{style:{fontSize:13,color:"#555",marginBottom:12}},"電力計の数値と先月の交換ラック数を入力してください"),
+      React.createElement("div",{style:{fontSize:13,color:"#555",marginBottom:12}},"前月末日の表示値・電力計・ラック数を入力してください"),
+      React.createElement("div",{style:{marginBottom:12}},
+        React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#E65100",marginBottom:4}},"前月末日の1号機（表示値）"),
+        React.createElement("input",{type:"number",step:"0.1",value:mLastB1,onChange:function(e){setMLastB1(e.target.value);},placeholder:"例: 0",style:{width:"100%",padding:"12px",borderRadius:8,border:"2px solid #E65100",fontSize:18,fontWeight:700,textAlign:"center"}})
+      ),
+      React.createElement("div",{style:{marginBottom:12}},
+        React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#E65100",marginBottom:4}},"前月末日の2号機（表示値）"),
+        React.createElement("input",{type:"number",step:"0.01",value:mLastB2,onChange:function(e){setMLastB2(e.target.value);},placeholder:"例: 8262.1",style:{width:"100%",padding:"12px",borderRadius:8,border:"2px solid #E65100",fontSize:18,fontWeight:700,textAlign:"center"}})
+      ),
       React.createElement("div",{style:{marginBottom:12}},
         React.createElement("label",{style:{display:"block",fontSize:13,fontWeight:700,color:"#333",marginBottom:4}},"電力計（メーター表示値）"),
         React.createElement("input",{type:"number",value:mPower,onChange:function(e){setMPower(e.target.value);},placeholder:"例: 542789",style:{width:"100%",padding:"12px",borderRadius:8,border:"2px solid #ddd",fontSize:18,fontWeight:700,textAlign:"center"}})
