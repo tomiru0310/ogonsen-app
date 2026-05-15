@@ -317,13 +317,10 @@ function App(){
     function doSave(){
       console.log("Saving data:",JSON.stringify(data));
       db.collection("daily_gj").doc(dk).set(data).then(function(){
-        // 保存後にinputをクリア（リロード後に正しい値が入る）
-        if(elB1)elB1.value="";
-        if(elB2)elB2.value="";
         if(data.total_gj!=null&&data.total_gj!==0){
           flash(dayNum+"日: "+data.total_gj+" GJ / \u00A5"+data.sales_invoice.toLocaleString());
         }else if(data.total_gj===0){
-          flash(dayNum+"日: GJ=0（前日と同じ値が入力されています。各日のボイラー累積表示値を入力してください）");
+          flash(dayNum+"日: GJ=0（前日と同じ値です。各日のボイラー累積表示値を入力してください）");
         }else{
           flash(dayNum+"日: 保存済（前日データなし - 先に前日を入力してください）");
         }
