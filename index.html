@@ -117,7 +117,7 @@ function App(){
     });
     if(isFirstThreeDays()){
       db.collection("monthly").doc(mk).get().then(function(doc){
-        if(!doc.exists||!doc.data().b1_display) setShowAlert(true);
+        if(!doc.exists||doc.data().prevLastDay_b1==null) setShowAlert(true);
       });
     }
   }
@@ -169,6 +169,9 @@ function App(){
         data.b1_gj=Math.round((v1-prevB1)*100)/100;
         data.b2_gj=Math.round((v2-prevB2)*100)/100;
         data.total_gj=Math.round((data.b1_gj+data.b2_gj)*100)/100;
+        if(data.total_gj<0){
+          if(!confirm("GJがマイナス("+data.total_gj+" GJ)です。\n今日の値: 1号="+v1+" / 2号="+v2+"\n前回の値: 1号="+prevB1+" / 2号="+prevB2+"\n\n累積表示値は増えるはずです。入力値を確認してください。\n\nこのまま保存しますか？")){return;}
+        }
         data.sales_invoice=Math.round(data.total_gj*RATE);
       }
       db.collection("daily_gj").doc(tk).set(data).then(function(){
@@ -221,14 +224,23 @@ function App(){
     if(!isNaN(lb1)&&!isNaN(lb2)){
       var pmk=prevMonthKey();
       db.collection("monthly").doc(pmk).set({lastDay_b1:lb1,lastDay_b2:lb2},{merge:true});
-      // Also save as daily_gj for prev month's last day
+      // 前月末日のdaily_gjが存在しない場合のみ作成（既存の実データを上書きしない）
       var prevYM=parseYM(pmk);var lastDay=dim(prevYM.year,prevYM.month);
       var lastDk=pmk+"-"+pad(lastDay);
-      db.collection("daily_gj").doc(lastDk).set({dateKey:lastDk,b1_display:lb1,b2_display:lb2,userId:"system",userName:"月初入力",time:now2.getTime(),timeStr:"月初入力"},{merge:true});
+      db.collection("daily_gj").doc(lastDk).get().then(function(existDoc){
+        if(!existDoc.exists||existDoc.data().userId==="system"){
+          db.collection("daily_gj").doc(lastDk).set({dateKey:lastDk,b1_display:lb1,b2_display:lb2,userId:"system",userName:"月初入力",time:now2.getTime(),timeStr:"月初入力"},{merge:true});
+        }
+      });
     }
-    if(prevMonthly&&data.b1_display&&data.b2_display){
-      data.prev_b1_gj=Math.round((data.b1_display-(prevMonthly.b1_display||0))*100)/100;
-      data.prev_b2_gj=Math.round((data.b2_display-(prevMonthly.b2_display||0))*100)/100;
+    // 月間GJ計算: 今月1日の累積値 - 前月1日の累積値
+    var cur_b1=data.b1_display||data.prevLastDay_b1;// 今月1日の表示値
+    var prev_b1=prevMonthly?(prevMonthly.prevLastDay_b1||prevMonthly.b1_display||0):0;
+    var cur_b2=data.b2_display||data.prevLastDay_b2;
+    var prev_b2=prevMonthly?(prevMonthly.prevLastDay_b2||prevMonthly.b2_display||0):0;
+    if(cur_b1&&cur_b2&&(prev_b1||prev_b2)){
+      data.prev_b1_gj=Math.round((cur_b1-prev_b1)*100)/100;
+      data.prev_b2_gj=Math.round((cur_b2-prev_b2)*100)/100;
       data.prev_total_gj=Math.round((data.prev_b1_gj+data.prev_b2_gj)*100)/100;
       data.prev_invoice=Math.round(data.prev_total_gj*RATE);
       data.prev_excl=Math.round(data.prev_total_gj*RATE_EXCL);
