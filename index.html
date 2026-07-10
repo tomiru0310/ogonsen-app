@@ -179,31 +179,47 @@ function App(){
       });
     }
 
-    // 前日のdaily_gjを探す
-    var yk=prevDateKey(tk);
-    db.collection("daily_gj").doc(yk).get().then(function(doc){
-      if(doc.exists&&doc.data().b1_display!=null){
-        calcAndSave(doc.data().b1_display,doc.data().b2_display);
-      }else{
-        // 前日データなし → 当月monthlyのprevLastDayを探す
-        var cmk=curMonthKey();
-        db.collection("monthly").doc(cmk).get().then(function(cDoc){
-          if(cDoc.exists&&cDoc.data().prevLastDay_b1!=null){
-            calcAndSave(cDoc.data().prevLastDay_b1,cDoc.data().prevLastDay_b2);
-          }else{
-            // 前月monthlyのlastDayを探す
-            var pmk=prevMonthKey();
-            db.collection("monthly").doc(pmk).get().then(function(mDoc){
-              if(mDoc.exists&&mDoc.data().lastDay_b1!=null){
-                calcAndSave(mDoc.data().lastDay_b1,mDoc.data().lastDay_b2);
-              }else{
-                // どこにもない → GJ計算なしで保存
-                calcAndSave(null,null);
-              }
-            });
-          }
-        });
-      }
+    // ★ 毎月1日はmonthly.prevLastDayを最優先で参照（日次データの上書き問題を回避）
+    var isFirstDay=(parseInt(tk.split("-")[2])===1);
+    if(isFirstDay){
+      var cmk=curMonthKey();
+      db.collection("monthly").doc(cmk).get().then(function(cDoc){
+        if(cDoc.exists&&cDoc.data().prevLastDay_b1!=null){
+          calcAndSave(cDoc.data().prevLastDay_b1,cDoc.data().prevLastDay_b2);
+        }else{
+          // monthlyにもない → 前日daily_gjを試す
+          var yk=prevDateKey(tk);
+          db.collection("daily_gj").doc(yk).get().then(function(doc){
+            if(doc.exists&&doc.data().b1_display!=null){
+              calcAndSave(doc.data().b1_display,doc.data().b2_display);
+            }else{calcAndSave(null,null);}
+          });
+        }
+      });
+    }else{
+      // 2日以降は前日のdaily_gjを探す
+      var yk=prevDateKey(tk);
+      db.collection("daily_gj").doc(yk).get().then(function(doc){
+        if(doc.exists&&doc.data().b1_display!=null){
+          calcAndSave(doc.data().b1_display,doc.data().b2_display);
+        }else{
+          // 前日データなし → 当月monthlyのprevLastDayを探す
+          var cmk2=curMonthKey();
+          db.collection("monthly").doc(cmk2).get().then(function(cDoc){
+            if(cDoc.exists&&cDoc.data().prevLastDay_b1!=null){
+              calcAndSave(cDoc.data().prevLastDay_b1,cDoc.data().prevLastDay_b2);
+            }else{
+              var pmk=prevMonthKey();
+              db.collection("monthly").doc(pmk).get().then(function(mDoc){
+                if(mDoc.exists&&mDoc.data().lastDay_b1!=null){
+                  calcAndSave(mDoc.data().lastDay_b1,mDoc.data().lastDay_b2);
+                }else{calcAndSave(null,null);}
+              });
+            }
+          });
+        }
+      });
+    }
     });
   }
 
